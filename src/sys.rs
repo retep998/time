@@ -164,64 +164,47 @@ mod inner {
 #[cfg(windows)]
 #[allow(non_snake_case)]
 mod inner {
-    use libc::{self, WORD, DWORD, LONG, WCHAR};
+    use winapi::*;
+    use kernel32::*;
     use ::{Tm};
     use std::mem;
     use std::sync::{Once, ONCE_INIT};
 
-    fn frequency() -> libc::LARGE_INTEGER {
-        static mut FREQUENCY: libc::LARGE_INTEGER = 0;
+    fn frequency() -> LARGE_INTEGER {
+        static mut FREQUENCY: LARGE_INTEGER = 0;
         static ONCE: Once = ONCE_INIT;
 
         unsafe {
             ONCE.call_once(|| {
-                libc::QueryPerformanceFrequency(&mut FREQUENCY);
+                QueryPerformanceFrequency(&mut FREQUENCY);
             });
             FREQUENCY
         }
     }
 
-    #[repr(C)]
-    struct SystemTime {
-        wYear: WORD,
-        wMonth: WORD,
-        wDayOfWeek: WORD,
-        wDay: WORD,
-        wHour: WORD,
-        wMinute: WORD,
-        wSecond: WORD,
-        wMilliseconds: WORD,
-    }
-
-    #[repr(C)]
-    struct FileTime {
-        dwLowDateTime: DWORD,
-        dwHighDateTime: DWORD,
-    }
-
     const HECTONANOSECS_IN_SEC: u64 = 10_000_000;
     const HECTONANOSEC_TO_UNIX_EPOCH: u64 = 11_644_473_600 * HECTONANOSECS_IN_SEC;
 
-    fn time_to_file_time(sec: i64) -> FileTime {
+    fn time_to_file_time(sec: i64) -> FILETIME {
         let t = (sec as u64 * HECTONANOSECS_IN_SEC) + HECTONANOSEC_TO_UNIX_EPOCH;
-        FileTime {
+        FILETIME {
             dwLowDateTime: t as DWORD,
             dwHighDateTime: (t >> 32) as DWORD
         }
     }
 
-    fn file_time_to_nsec(ft: &FileTime) -> i32 {
+    fn file_time_to_nsec(ft: &FILETIME) -> i32 {
         let t = ((ft.dwHighDateTime as u64) << 32) | (ft.dwLowDateTime as u64);
         (((t - HECTONANOSEC_TO_UNIX_EPOCH) % HECTONANOSECS_IN_SEC) * 100) as i32
     }
 
-    fn file_time_to_time(ft: &FileTime) -> i64 {
+    fn file_time_to_time(ft: &FILETIME) -> i64 {
         let t = ((ft.dwHighDateTime as u64) << 32) | (ft.dwLowDateTime as u64);
         ((t - HECTONANOSEC_TO_UNIX_EPOCH) / HECTONANOSECS_IN_SEC) as i64
     }
 
-    fn tm_to_system_time(tm: &Tm) -> SystemTime {
-        let mut sys = unsafe { mem::zeroed() };
+    fn tm_to_system_time(tm: &Tm) -> SYSTEMTIME {
+        let mut sys: SYSTEMTIME = unsafe { mem::zeroed() };
         sys.wSecond = tm.tm_sec as WORD;
         sys.wMinute = tm.tm_min as WORD;
         sys.wHour = tm.tm_hour as WORD;
@@ -232,7 +215,7 @@ mod inner {
         sys
     }
 
-    fn system_time_to_tm(sys: &SystemTime, tm: &mut Tm) {
+    fn system_time_to_tm(sys: &SYSTEMTIME, tm: &mut Tm) {
         tm.tm_sec = sys.wSecond as i32;
         tm.tm_min = sys.wMinute as i32;
         tm.tm_hour = sys.wHour as i32;
@@ -254,25 +237,6 @@ mod inner {
         }
     }
 
-    #[repr(C)]
-    pub struct TimeZoneInfo {
-        Bias: LONG,
-        StandardName: [WCHAR; 32],
-        StandardDate: SystemTime,
-        StandardBias: LONG,
-        DaylightName: [WCHAR; 32],
-        DaylightDate: SystemTime,
-        DaylightBias: LONG,
-    }
-
-    extern "system" {
-        fn GetSystemTimeAsFileTime(out: *mut FileTime);
-        fn FileTimeToSystemTime(ft: *const FileTime, out: *mut SystemTime) -> bool;
-        fn SystemTimeToFileTime(sys: *const SystemTime, ft: *mut FileTime) -> bool;
-        fn SystemTimeToTzSpecificLocalTime(tz: *const TimeZoneInfo, utc: *const SystemTime, local: *mut SystemTime) -> bool;
-        fn TzSpecificLocalTimeToSystemTime(tz: *const TimeZoneInfo, local: *const SystemTime, utc: *mut SystemTime) -> bool;
-    }
- 
     pub fn time_to_utc_tm(sec: i64, tm: &mut Tm) {
         let mut out = unsafe { mem::zeroed() };
         let ft = time_to_file_time(sec);
@@ -326,21 +290,21 @@ mod inner {
     pub fn get_precise_ns() -> u64 {
         let mut ticks = 0;
         unsafe {
-            assert!(libc::QueryPerformanceCounter(&mut ticks) == 1);
+            assert!(QueryPerformanceCounter(&mut ticks) == 1);
         }
         mul_div_i64(ticks as i64, 1000000000, frequency() as i64) as u64
 
     }
 
-    pub fn time_zone(bias: Option<i32>) -> *const TimeZoneInfo {
+    pub fn time_zone(bias: Option<i32>) -> *const TIME_ZONE_INFORMATION {
         use std::ptr;
-        static mut TZ: Option<TimeZoneInfo> = None;
+        static mut TZ: Option<TIME_ZONE_INFORMATION> = None;
         static ONCE: Once = ONCE_INIT;
 
         unsafe {
             ONCE.call_once(|| {
                 if let Some(bias) = bias {
-                    let mut tz = TimeZoneInfo::default();
+                    let mut tz: TIME_ZONE_INFORMATION = mem::zeroed();
                     tz.Bias = bias;
                     TZ = Some(tz);
                 }

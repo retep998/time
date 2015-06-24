@@ -37,6 +37,8 @@
 extern crate libc;
 #[cfg(feature = "rustc-serialize")]
 extern crate rustc_serialize;
+extern crate winapi;
+extern crate kernel32;
 
 use std::cmp::Ordering;
 use std::fmt;
